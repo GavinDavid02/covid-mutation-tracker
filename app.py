@@ -34,8 +34,6 @@ from visualization.plots import (
     geographic_plotly,
     spike_protein_map,
     spike_rbd_detail,
-    phylogenetic_tree_plotly,
-    cooccurrence_heatmap,
     sweep_speed_chart,
     WHO_COLOURS,
 )
@@ -68,7 +66,6 @@ def load_all_data():
     data["mutations"]        = _load("mutation_table")
     data["variant_freq"]     = _load("variant_frequency")
     data["mutation_freq"]    = _load("mutation_frequency_time")
-    data["cooccurrence"]     = _load("cooccurrence")
     data["convergent"]       = _load("convergent_evolution")
     data["hotspots"]         = _load("hotspots")
     data["sweeps"]           = _load("sweep_speed")
@@ -227,25 +224,7 @@ def tab_overview(data, filtered):
                 unsafe_allow_html=True,
             )
 
-    # Hotspot summary
-    st.divider()
-    hs = data["hotspots"]
-    if not hs.empty:
-        st.markdown("**Top mutational hotspots (spike protein)**")
-        top_hs = hs.nlargest(10, "mutation_count")[
-            ["position", "domain", "mutation_count", "top_mutations", "is_hotspot"]
-        ]
-        st.dataframe(
-            top_hs.rename(columns={
-                "position":       "Position",
-                "domain":         "Domain",
-                "mutation_count": "Occurrences",
-                "top_mutations":  "Top mutations",
-                "is_hotspot":     "Hotspot",
-            }),
-            width='stretch',
-            hide_index=True,
-        )
+
 
 
 # ── Tab: Mutation Timeline ─────────────────────────────────────────────────
@@ -404,91 +383,61 @@ def tab_spike(data):
 # ── Tab: Convergent Evolution ─────────────────────────────────────────────
 
 def tab_convergent(data):
-    st.subheader("Convergent evolution & co-occurrence")
+    st.subheader("Convergent evolution")
+    st.caption("Mutations that appeared independently in multiple distinct variants — a sign of strong selective pressure.")
+
+    conv = data["convergent"]
+    if conv.empty:
+        st.info("No convergent evolution data available.")
+        return
+
+    import plotly.express as px
+    top_conv = conv.nlargest(12, "appearance_count")
+    fig = px.bar(
+        top_conv,
+        x="mutation",
+        y="appearance_count",
+        color="appearance_count",
+        color_continuous_scale="Reds",
+        labels={"mutation": "Mutation", "appearance_count": "Number of variants"},
+        title="Spike mutations with strongest convergent evolution",
+    )
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False,
+        coloraxis_showscale=False,
+        xaxis_title="Mutation",
+        yaxis_title="Independent variant appearances",
+    )
+    st.plotly_chart(fig, width='stretch', key="chart_8")
+
+    st.markdown("**What this means:** Each bar shows a spike mutation that evolved independently in multiple SARS-CoV-2 lineages. When the same mutation arises repeatedly across unrelated variants, it indicates the virus is under strong evolutionary pressure to acquire that change — usually for increased transmissibility or immune escape.")
 
     col1, col2 = st.columns(2)
-
     with col1:
-        st.markdown("**Convergent mutations** (appearing independently in ≥2 variants)")
-        conv = data["convergent"]
-        if not conv.empty:
-            st.dataframe(
-                conv[["mutation", "position", "lineages", "appearance_count"]]
-                    .rename(columns={
-                        "mutation":         "Mutation",
-                        "position":         "Position",
-                        "lineages":         "Found in variants",
-                        "appearance_count": "Independent appearances",
-                    }),
-                width='stretch',
-                hide_index=True,
-            )
-            # Bar chart
-            import plotly.express as px
-            top_conv = conv.nlargest(12, "appearance_count")
-            fig = px.bar(
-                top_conv,
-                x="mutation",
-                y="appearance_count",
-                color="appearance_count",
-                color_continuous_scale="Reds",
-                labels={"mutation": "Mutation", "appearance_count": "Variants"},
-                title="Top convergent spike mutations",
-            )
-            fig.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                showlegend=False,
-                coloraxis_showscale=False,
-            )
-            st.plotly_chart(fig, width='stretch', key="chart_8")
-        else:
-            st.info("No convergent evolution data available.")
-
+        st.markdown("**Top convergent mutations**")
+        st.dataframe(
+            conv.nlargest(8, "appearance_count")[["mutation", "appearance_count", "lineages"]]
+                .rename(columns={
+                    "mutation":         "Mutation",
+                    "appearance_count": "Variants",
+                    "lineages":         "Found in",
+                }),
+            width='stretch',
+            hide_index=True,
+        )
     with col2:
-        st.markdown("**Mutation co-occurrence** (linkage disequilibrium)")
-        cooccur = data["cooccurrence"]
-        if not cooccur.empty:
-            st.dataframe(
-                cooccur.head(15)[["mut_a","mut_b","cooccurrence_count","odds_ratio","p_value"]]
-                       .rename(columns={
-                           "mut_a":              "Mutation A",
-                           "mut_b":              "Mutation B",
-                           "cooccurrence_count": "Co-occurrences",
-                           "odds_ratio":         "Odds ratio",
-                           "p_value":            "p-value",
-                       }),
-                width='stretch',
-                hide_index=True,
-            )
-            fig_hm = cooccurrence_heatmap(cooccur)
-            st.plotly_chart(fig_hm, width='stretch', key="chart_9")
-        else:
-            st.info("No co-occurrence data available.")
+        st.markdown("**Key example: E484K**")
+        st.info(
+            "E484K is the classic example of convergent evolution in SARS-CoV-2. "
+            "It appeared independently in the Beta (South Africa), Gamma (Brazil), "
+            "and Iota (USA) lineages — all acquiring the same immune escape mutation "
+            "without sharing a common ancestor."
+        )
 
 
-# ── Tab: Phylogenetic Tree ─────────────────────────────────────────────────
 
-def tab_phylo():
-    st.subheader("Variant phylogenetic tree")
-    st.caption("Schematic representation of variant branching from Wuhan-Hu-1 reference")
-
-    fig = phylogenetic_tree_plotly()
-    st.plotly_chart(fig, width='stretch', key="chart_10")
-
-    st.divider()
-    st.markdown("**Variant definition summary**")
-    rows = []
-    for name, v in VARIANT_DEFINITIONS.items():
-        rows.append({
-            "Variant":         name,
-            "WHO label":       v["who"],
-            "Pango lineage":   v["pango"],
-            "Origin":          v["origin_country"],
-            "First detected":  v["first_detected"],
-            "Key spike muts":  ", ".join(v["defining_spike"][:5]),
-        })
-    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
 # ── Tab: Data Explorer ─────────────────────────────────────────────────────
@@ -550,7 +499,7 @@ def tab_data(filtered):
 # ── Tab: About ────────────────────────────────────────────────────────────
 
 def tab_about():
-    st.subheader("About this project")
+    st.subheader("About")
     st.markdown("""
 ## SARS-CoV-2 Mutation Tracker
 
@@ -597,8 +546,7 @@ def main():
     # Header
     st.markdown(
         "<h1 style='margin-bottom:0'>🧬 SARS-CoV-2 Mutation Tracker</h1>"
-        "<p style='color:#888; margin-top:4px'>Real genomic surveillance · "
-        "Nextstrain / GISAID · Spike protein evolution</p>",
+        "<p style='color:#888; margin-top:4px'>Tracking how SARS-CoV-2 spike mutations emerge, spread, and affect viral fitness · Nextstrain open data</p>",
         unsafe_allow_html=True,
     )
     st.divider()
@@ -620,7 +568,6 @@ def main():
         "🌍 Geographic Spread",
         "🔬 Spike Protein",
         "🧬 Convergent Evolution",
-        "🌳 Phylogenetic Tree",
         "🗂 Data Explorer",
         "ℹ About",
     ])
@@ -636,10 +583,8 @@ def main():
     with tabs[4]:
         tab_convergent(data)
     with tabs[5]:
-        tab_phylo()
-    with tabs[6]:
         tab_data(filtered)
-    with tabs[7]:
+    with tabs[6]:
         tab_about()
 
 
